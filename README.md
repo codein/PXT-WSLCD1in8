@@ -1,7 +1,51 @@
 # LCD1in8
 
+forked from [waveshare/PXT-WSLCD1in8](https://github.com/waveshare/PXT-WSLCD1in8)
 
 Here’s why `LCD_Display` is slow and how you can optimize it.
+
+---
+
+## Why `LCD_Display()` is slow
+
+`LCD_Display` copies the full 160×128 frame buffer from SPI SRAM to the LCD over the same SPI bus. The cost comes from the number of SPI operations and how they’re done.
+
+### SPI work per refresh
+
+Approximate counts:
+
+| Operation        | Count  | Notes                                              |
+|------------------|--------|----------------------------------------------------|
+| SRAM read bytes  | 40,960 | 64 iterations × 640 bytes per “2-line” row         |
+| LCD write bytes  | 40,960 | Same 64 × 640                                     |
+| Address/command  | 256+   | 4-byte address per SRAM read block                |
+
+So about **82,000+ byte transfers** per full-screen refresh.
+
+### Main bottlenecks
+
+1. **Per-byte `pins.spiWrite()`**
+
+   - Each transfer is a separate call.
+   - Even at 18 MHz SPI (~0.44 µs per byte), the real limit is:
+     - JavaScript function call overhead
+     - Array indexing (`rbuf[offset]`)
+     - Per-byte round-trip into the runtime
+   - That overhead dominates over the actual SPI time.
+
+2. **Read-then-write pattern**
+
+   ```typescript
+   for(let offset = 0; offset<640; offset++){
+       rbuf[offset] = pins.spiWrite(0x00);  // 640 individual calls
+   }
+   // ...
+   for (let offset = 0; offset < 640; offset++) {
+       pins.spiWrite(rbuf[offset]);         // another 640 calls
+   }
+   ```
+
+   - No bulk transfer; everything is byte-by-byte.
 
 ---
 
